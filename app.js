@@ -5,9 +5,19 @@ const Listing = require("./models/listing.js");
 const path = require("path");
 const methodOverride =require("method-override");
 const ejsMate =  require("ejs-mate");
+const wrapAsync = require("./utils/wrapAsync.js");
+const ExpressError = require("./utils/ExpressError.js");
+const {listingSchema, reviewsSchema} = require("./schema.js");
+const Review = require("./models/reviews.js");
+const session = require("express-session");
+const flash = require("connect-flash");
+const passport = require("passport");
+const LocalStrategy = require("passport-local");
+const User = require("./models/user.js");
 
-
-
+const listingsRouter = require("./routes/listing.js");
+const reviewsRouter = require("./routes/reviews.js");
+const userRouter = require("./routes/user.js");
 
 main().catch(err => console.log(err));
 async function main() {
@@ -21,48 +31,73 @@ app.use(methodOverride("_method"));
 app.engine('ejs',ejsMate);
 app.use(express.static(path.join(__dirname,"/public")));
 
+const sesssionOption = {
+  secret : "mysuperSecret",
+  resave : false,
+  saveUninitialized : true,
+  cookie:{
+    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    maxAge : 7 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+  }
+};
 
-//Index route
-app.get("/listings",async (req,res)=>{
-  const allListing = await Listing.find({});
-  res.render("listings/index.ejs",{allListing});
-  })
-  //new route
-app.get("/listings/new",(req,res)=>{
-  res.render("listings/new.ejs");
+app.use(session(sesssionOption));
+app.use(flash());
+
+app.use(passport.initialize());
+app.use(passport.session());
+passport.use(new LocalStrategy(User.authenticate()));
+
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
+
+app.use((req,res,next) =>{
+ res.locals.success = req.flash("success");
+ res.locals.error = req.flash("error");
+ res.locals.currUser = req.user;
+ //console.log(res.locals.success);
+ next();
 })
-  //Show route
-  app.get("/listings/:id",async (req,res)=>{
-    let {id} = req.params;
-    const listing = await Listing.findById(id);
- res.render("listings/show.ejs",{listing});
-  })
-  //create4 route
-  app.post("/listings",async (req,res)=>{
-    let {title,description,image,price,location,country} = req.body;
-    const newListing = new Listing({title,description,image,price,location,country});
-      await newListing.save();
- res.redirect("/listings");
-    })
- //edit route
- app.get("/listings/:id/edit",async (req,res)=>{
-  let {id} = req.params;
-  let listing =  await Listing.findById(id);
-  res.render("listings/edit.ejs",{listing});
- })
- //update route
- app.put("/listings/:id",async (req,res)=>{
-  let {id} = req.params;
-  await Listing.findByIdAndUpdate(id,{...req.body.listing});
-  res.redirect("/listings");
- })
- //delete route
- app.delete("/listings/:id",async (req,res)=>{
- let {id} = req.params;
- let deleted = await Listing.findByIdAndDelete(id);
-console.log(deleted);
-res.redirect("/listings");
- })
+
+app.get("/demouser",async (req,res)=>{
+let fakeUser = new User({
+  email: "student@gmail.com",
+  username:"delta-student"
+});
+let registeredUser = await User.register(fakeUser,"helloWord");
+res.send(registeredUser);
+})
+
+
+
+app.use("/listings",listingsRouter);
+app.use("/listings/:id/reviews",reviewsRouter);
+app.use("/",userRouter);
+  
+
+//Send evrything to reviews.js
+ //Reviews
+ //POst route
+//  app.post("/listings/:id/reviews",validateReview, async(req,res)=>{
+// let listing = await Listing.findById(req.params.id);
+// let newReview = new Review(req.body.review);
+// listing.reviews.push(newReview);
+// await newReview.save();
+// await listing.save();
+// res.redirect(`/listings/${listing._id}`);
+//  })
+
+// //Delete Review Route
+// app.delete("/listings/:id/reviews/:reviewId",wrapAsync(async(req,res)=>{
+//   let {id , reviewId} = req.params;
+//   await Listing.findByIdAndUpdate(id,{$pull:{reviews: reviewId}}); 
+//   await Review.findByIdAndDelete(reviewId);
+
+//   res.redirect(`/listings/${id}`);
+// }))
+
+
 
 app.get("/",(req,res)=>{
   res.send("Hi i am up");
@@ -70,7 +105,7 @@ app.get("/",(req,res)=>{
 
 app.get("/testlistening",async (req,res)=>{
 let sampleLesting = new Listing({
-  title : "My new tree",
+  title : "My new tree", 
   description:"By the beach",
   price : 1200,
   location:"Goa",
@@ -79,6 +114,18 @@ let sampleLesting = new Listing({
 await sampleLesting.save();
 console.log("Sample was saved");
 res.send("Successful");
+})
+
+//what if route nor found or it is nor present there 
+app.all(/.*/,(req,res,next)=>{
+  next(new ExpressError(404,"Page not foound"));
+});
+
+
+app.use((err,req,res,next)=>{
+  let {statusCode = 500,message="Something went wrong"} = err;
+  res.status(statusCode).render("listings/error.ejs",{message});
+ // res.status(statusCode).send(message)
 })
 app.listen(8080,()=>{
   console.log("Server is listening to port 8080");
